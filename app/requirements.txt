@@ -1,0 +1,8 @@
+pylint
+pytest
+pytest-cov
+yapf
+seaborn
+pandas
+flask
+matplotlib

@@ -1,0 +1,13 @@
+pylint
+pytest
+pytest-cov
+pytest-testinfra
+yapf
+genbadge
+defusedxml
+tzlocal
+paramiko
+seaborn
+pandas
+flask
+matplotlib

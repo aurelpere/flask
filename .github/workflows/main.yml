@@ -1,0 +1,236 @@
+name: flask-deployment
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: set up python 3.9
+        uses: actions/setup-python@v1
+        with:
+          python-version: 3.9
+
+      - name: Run Trivy vulnerability scanner in IaC mode
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          hide-progress: false
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+      - name: Install dependencies # Runs commands using the runners shell
+        run: |
+          make install
+
+      - name: yamllint with yamllint
+        run: |
+          sudo apt-get install yamllint
+          make yamllint
+
+      - name: Lint with pylint
+        run: |
+          make lint
+
+      - name: test with pytest
+        run: |
+          make testapp
+
+      - name: format with yapf
+        run: |
+          make format
+
+      - name: make a test coverage badge with genbadge
+        run: |
+          make coverage_badge
+
+      - name: clean pytest report
+        run: |
+          make cleaning
+
+      - name: Make ssh private key from secret
+        run: |
+          echo "$PVT_KEY" > packer/digitalocean
+        env:
+          PVT_KEY: ${{ secrets.PVT_KEY }}
+
+      - name: Make ssh public key from secret
+        run: |
+          echo "$PUBLIC_KEY" > packer/digitalocean.pub
+        env:
+          PUBLIC_KEY: ${{ secrets.PUBLIC_KEY }}
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_PAT }}
+
+      - name: check if a packer image exists
+        run: if doctl compute image list-user -t $(echo "$DO_PAT") | grep packer; then echo "IMAGE_EXIST=true" >> $GITHUB_ENV; else echo "IMAGE_EXIST=false" >> $GITHUB_ENV; fi
+        env:
+          DO_PAT: ${{ secrets.DO_PAT }}
+
+      - name: Packer Validate Template
+        if: ${{ env.IMAGE_EXIST == 'false'}}
+        uses: hashicorp/packer-github-actions@master
+        with:
+          command: validate
+          arguments: -syntax-only
+          target: packer/packer.pkr.hcl
+        env:
+          DO_PAT: ${{ secrets.DO_PAT }}
+
+      - name: Packer init
+        if: ${{ env.IMAGE_EXIST == 'false'}}
+        uses: hashicorp/packer-github-actions@master
+        with:
+          command: init
+          target: packer/packer.pkr.hcl
+
+      - name: Packer Build Artifact
+        if: ${{ env.IMAGE_EXIST == 'false'}}
+        uses: hashicorp/packer-github-actions@master
+        with:
+          command: build
+          arguments: "-color=false -on-error=abort"
+          target: packer.pkr.hcl
+          working_directory: packer
+        env:
+          PACKER_LOG: 1
+          DO_PAT: ${{ secrets.DO_PAT }}
+
+      - name: Check ip file existence before terraform build (terraform output)
+        id: check_files_before
+        uses: andstor/file-existence-action@v1
+        with:
+          files: "terraform/ip.txt"
+
+      - name: Make ssh private key from secret
+        run: |
+          echo "$PVT_KEY" > terraform/digitalocean
+        env:
+          PVT_KEY: ${{ secrets.PVT_KEY }}
+
+      - name: Make ssh public key from secret
+        run: |
+          echo "$PUBLIC_KEY" > terraform/digitalocean.pub
+        env:
+          PUBLIC_KEY: ${{ secrets.PUBLIC_KEY }}
+
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.2.3
+
+      - name: Terraform init
+        if: steps.check_files_before.outputs.files_exists == 'false'
+        run: cd terraform && terraform init
+        env:
+          TF_VAR_do_token: ${{ secrets.DO_PAT }}
+
+      - name: Terraform plan
+        if: steps.check_files_before.outputs.files_exists == 'false'
+        run: cd terraform && terraform plan
+        env:
+          TF_VAR_do_token: ${{ secrets.DO_PAT }}
+
+      - name: Terraform apply
+        if: steps.check_files_before.outputs.files_exists == 'false'
+        run: cd terraform && terraform apply -auto-approve
+        env:
+          TF_VAR_do_token: ${{ secrets.DO_PAT }}
+
+      - name: Make ssh private key from secret
+        run: |
+          echo "$PVT_KEY" > digitalocean
+        env:
+          PVT_KEY: ${{ secrets.PVT_KEY }}
+
+      - name: make tar file of project
+        run: tar -cvf project.tar app/
+      - name: Assign host ip to Env variable
+        run: |
+          echo "HOST_IP=$(cat ./terraform/ip.txt)" >> $GITHUB_ENV
+
+      - name: Copy project.tar to remote host
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{env.HOST_IP}}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.PVT_KEY }}
+          port: ${{ secrets.PORT }}
+          source: "project.tar"
+          target: "/tmp"
+          overwrite: true
+      - name: Test remote infrastructure
+        run: |
+          pytest --ssh-config="sshconfig" --hosts="$(cat ./terraform/ip.txt)" test_infra.py
+      - name: Deploy using ssh
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{env.HOST_IP}}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.PVT_KEY }}
+          port: ${{ secrets.PORT }}
+          script: |
+            echo 'deploying zabbix'
+            cd /zabbix && docker-compose up -d
+            echo 'zabbix deployed'
+            echo 'copying zabbix module to container'
+            docker exec -it zabbixserver mkdir -p /var/lib/zabbix/modules/dockermodule
+            docker cp /zabbix/zabbix_module_docker.so zabbixserver:/var/lib/zabbix/modules/dockermodule
+            echo 'copied zabbix module to container done'
+            echo 'extracting tar file'
+            sudo rm -rf /app/* && sudo tar -xf /tmp/project.tar -C /
+            echo 'tar file extracted'
+            echo 'configuring for python package fine deployment'
+            sudo chown -R kr1p /app
+            sudo chmod -R u=rwx /app
+            export PATH="/home/kr1p/.local/lib/python3.9/site-packages:$PATH"
+            echo 'configuring done'
+            echo 'going into app folder'
+            cd /app
+            echo 'getting rid of hidden macos files'
+            sudo find . -type f -name '._*' -delete
+            echo 'hidden macos files deleted'
+            echo 'running install'
+            make install
+            echo 'install done'
+            echo 'running format'
+            yapf -ir -vv --style pep8 .
+            echo 'format done'
+            echo 'running lint'
+            pylint app --verbose --disable=R,C -sy
+            echo 'lint done'
+            echo 'running test'
+            make test
+            echo 'test done'
+            #echo 'running vulnerability check'
+            #trivy fs --severity HIGH,CRITICAL --security-checks vuln / > security_check.txt
+            #echo 'vuln check done'
+            echo 'running docker build & run'
+            make docker
+            echo 'docker built and running'
+
+      - name: Delete keys
+        run: |
+          sudo rm digitalocean
+          sudo rm terraform/digitalocean
+          sudo rm terraform/digitalocean.pub
+          sudo rm packer/digitalocean
+          sudo rm packer/digitalocean.pub
+
+      - name: Commit badge file # commit the badge file into the repository
+        run: |
+          git config --local user.email "aurel.pere@gmail.com"
+          git config --local user.name "aurelpere"
+          git add app/coverage-badge.svg
+          git commit --allow-empty -m "Updating the test coverage badge"
+
+      - name: Push changes # push the output file to your repo
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          force: true

@@ -1,0 +1,338 @@
+---
+- hosts: all
+  become: true
+
+  tasks:
+    - name: Install Prerequisites
+      apt: name=aptitude update_cache=yes state=latest force_apt_get=yes
+
+# set timezone
+    - name: Set timezone to Europe/Paris
+      become: yes
+      become_method: sudo
+      timezone:
+        name: Europe/Paris
+
+# Configure journald
+    - name: Insert multiple lines max 100M and storage persistent for journald
+      blockinfile:
+        path: /etc/systemd/journald.conf
+        backup: yes
+        block: |
+          Storage=persistent
+          SystemMaxUse=100M
+
+    - name: Restart systemd-journald
+      service:
+        name: systemd-journald
+        state: restarted
+
+    - name: Make sure we have a 'docker' group
+      group:
+        name: docker
+        state: present
+
+    - name: Make sure we have a 'zabbix' group
+      group:
+        name: zabbix
+        state: present
+
+    - name: Make sudo passwordless
+      lineinfile:
+        path: /etc/sudoers
+        state: present
+        regexp: '^%sudo'
+        line: '%sudo ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+
+# User + Key Setup
+    - name: Create a new regular user with become privileges
+      user:
+        name: "kr1p"
+        state: present
+        groups: "sudo, docker, zabbix"
+        append: true
+        create_home: true
+        shell: /bin/bash
+
+    - name: Set authorized key for remote user
+      authorized_key:
+        user: "kr1p"
+        state: present
+        key: "{{ lookup('file', '/tmp/digitalocean.pub') }}"
+
+# Install Packages
+#    - name: Install zabbix .deb package from the internet
+#      ansible.builtin.apt:
+#        deb: https://repo.zabbix.com/zabbix/6.0/debian/pool/main/z/zabbix-release/zabbix-release_6.0-1+debian11_all.deb
+
+    - name: Add trivy signing key, will not download if present
+      ansible.builtin.apt_key:
+        url: https://aquasecurity.github.io/trivy-repo/deb/public.key
+        state: present
+
+    - name: Add trivy repository into sources list
+      ansible.builtin.apt_repository:
+        repo: deb https://aquasecurity.github.io/trivy-repo/deb bullseye main
+        state: present
+
+    - name: Add docker signing key, will not download if present
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+
+    - name: Add docker repository into sources list
+      ansible.builtin.apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/debian bullseye stable
+        state: present
+
+    - name: Update apt
+      apt: update_cache=yes
+
+#    - name: Install required system packages
+#      apt: name={{ sys_packages }} state=latest
+    - name: Install a list of packages
+      ansible.builtin.apt:
+        pkg:
+          - acl
+          - curl
+          - nano
+          - git
+          - ufw
+          - docker-ce
+          - docker-ce-cli
+          - docker-compose
+          - ufw
+          - rsync
+          - apt-transport-https
+          - ca-certificates
+          - gnupg2
+          - software-properties-common
+          - python3-pip
+          - virtualenv
+          - python3-setuptools
+          - trivy
+          #- zabbix-agent2
+
+#    - name: Update all packages to their latest version
+#      ansible.builtin.apt:
+#        name: "*"
+#        state: latest
+
+    - name: Upgrade the OS (apt-get dist-upgrade)
+      ansible.builtin.apt:
+        upgrade: dist
+
+    - name: Install pytest-testinfra python package
+      ansible.builtin.pip:
+        name: pytest-testinfra
+
+    - name: Install tzlocal python package
+      ansible.builtin.pip:
+        name: tzlocal
+
+    - name: Install supervisord (python package)
+      ansible.builtin.pip:
+        name: supervisor
+
+    - name: Export python path
+      blockinfile:
+        path: /home/kr1p/.bashrc
+        backup: yes
+        block: |
+          export PATH="/home/kr1p/.local/lib/python3.9/site-packages:$PATH"
+# docker Setup
+
+    - name: Start service docker, if not started
+      ansible.builtin.service:
+        name: docker
+        state: started
+
+    - name: Enable service docker, and not touch the state
+      ansible.builtin.service:
+        name: docker
+        enabled: yes
+
+    - name: Enable service containerd, and not touch the state
+      ansible.builtin.service:
+        name: containerd
+        enabled: yes
+
+    - name: Grant user kr1p read write access (access control list) to docker.sock file
+      ansible.posix.acl:
+        path: /var/run/docker.sock
+        entity: kr1p
+        etype: user
+        permissions: rw
+        state: present
+# Swap Setup
+    - name: check if swap file exists
+      stat:
+        path: "/swapfile"
+      register: swap_file_check
+
+    - name: create swap file
+      become: yes
+      command: fallocate -l 2G /swapfile
+      when: not swap_file_check.stat.exists
+
+    - name: Create swap space
+      command: dd if=/dev/zero of=/extraswap bs=1M count=512
+      when: not swap_file_check.stat.exists
+
+    - name: set permissions on swap file
+      become: yes
+      file:
+        path: "/swapfile"
+        mode: 0600
+
+    - name: format swap file
+      become: yes
+      command: mkswap /swapfile
+      when: not swap_file_check.stat.exists
+
+    - name: add to fstab
+      become: yes
+      lineinfile:
+        dest: /etc/fstab
+        regexp: "/swapfile"
+        line: "/swapfile none swap sw 0 0"
+
+    - name: turn on swap
+      become: yes
+      command: swapon -a
+
+    - name: set swapiness vmswappiness
+      become: yes
+      sysctl:
+        name: vm.swappiness
+        value: "50"
+
+    - name: set swapiness vfs_cache
+      sysctl:
+        name: vm.vfs_cache_pressure
+        value: "50"
+
+#SSH Setup
+    - name: Replacing sshd_config
+      copy:
+        dest: "/etc/ssh/sshd_config"
+        content: |
+          Port 4444
+          Protocol 2
+          HostKey /etc/ssh/ssh_host_rsa_key
+          HostKey /etc/ssh/ssh_host_dsa_key
+          HostKey /etc/ssh/ssh_host_ecdsa_key
+          HostKey /etc/ssh/ssh_host_ed25519_key
+          UsePrivilegeSeparation yes
+          KeyRegenerationInterval 3600
+          ServerKeyBits 1024
+          SyslogFacility AUTH
+          LogLevel INFO
+          LoginGraceTime 120
+          PermitRootLogin no
+          StrictModes yes
+          RSAAuthentication yes
+          PubkeyAuthentication yes
+          IgnoreRhosts yes
+          RhostsRSAAuthentication no
+          HostbasedAuthentication no
+          PermitEmptyPasswords no
+          ChallengeResponseAuthentication no
+          X11Forwarding yes
+          X11DisplayOffset 10
+          PrintMotd no
+          PrintLastLog yes
+          TCPKeepAlive yes
+          AcceptEnv LANG LC_*
+          Subsystem sftp /usr/lib/openssh/sftp-server
+          UsePAM yes
+          AllowUsers kr1p
+          PasswordAuthentication no
+
+    - name: Restart ssh
+      service:
+        name: ssh
+        state: restarted
+#Zabbix Setup
+#    - name: Replace serveractive in zabbix_agent2.conf
+#      ansible.builtin.replace:
+#        path: /etc/zabbix/zabbix_agent2.conf
+#        regexp: 'ServerActive=127.0.0.1'
+#        replace: 'ServerActive=127.0.0.1' #unchanged for same server in tutorial
+#    - name: Replace server in zabbix_agent2.conf
+#      ansible.builtin.replace:
+#        path: /etc/zabbix/zabbix_agent2.conf
+#        regexp: 'Server=127.0.0.1'
+#        replace: 'Server=127.0.0.1' #unchanged for same server in tutorial
+#
+#    - name: Replace server in zabbix_agent2.conf
+#      ansible.builtin.replace:
+#        path: /etc/zabbix/zabbix_agent2.conf
+#        regexp: 'Hostname=Zabbix server'
+#        replace: 'Hostname=Zabbix server' #unchanged for same server in tutorial
+#    - name: Restart zabbix
+#      service:
+#        name: zabbix-agent2
+#        state: restarted
+#
+#    - name: Enable service zabbix-agent2, and not touch the state
+#      ansible.builtin.service:
+#        name: zabbix-agent2
+#        enabled: yes
+    - name: adding existing user 'zabbix' to group docker
+      user:
+        name: 'zabbix'
+        groups: docker
+        append: yes
+# UFW Setup
+    - name: Allow port range 4000-4010 tcp
+      ufw:
+        rule: allow
+        port: 4000:4010
+        proto: tcp
+
+    - name: Allow port range 4000-4010 udp
+      ufw:
+        rule: allow
+        port: 4000:4010
+        proto: udp
+
+    - name: Allow port 4444
+      ufw:
+        rule: allow
+        port: 4444
+
+    - name: Allow port 80
+      ufw:
+        rule: allow
+        port: 80
+
+    - name: Allow port 443
+      ufw:
+        rule: allow
+        port: 443
+
+    - name: Allow port 10050
+      ufw:
+        rule: allow
+        port: 10050
+
+    - name: Allow port 10051
+      ufw:
+        rule: allow
+        port: 10051
+
+    - name: UFW - Allow all outgoing traffic
+      ufw:
+        policy: allow
+        direction: outgoing
+
+    - name: UFW - Deny all other incoming traffic by default
+      ufw:
+        policy: deny
+        direction: incoming
+
+    - name: enable ufw
+      ufw:
+        state: enabled
