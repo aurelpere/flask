@@ -192,3 +192,4 @@ def test_ufwports(host):
         assert '10051                      ALLOW       Anywhere' in out
         assert '10050                      ALLOW       Anywhere' in out
 
+
