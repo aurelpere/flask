@@ -1,7 +1,6 @@
 version: '3.5'
 services:
  zabbix-server:
-  container_name: zabbixserver
   image: zabbix/zabbix-server-pgsql:centos-6.0-latest
   ports:
    - "10051:10051"
@@ -194,8 +193,6 @@ services:
      cpus: '0.1'
      memory: 64M
    mode: global
-  links:
-   - zabbix-server:zabbix-server
   env_file:
    - ./env_vars/.env_agent
   privileged: true
