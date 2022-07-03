@@ -56,6 +56,7 @@ build {
 
   provisioner "ansible-local" {
     playbook_file = "../ansible/playbook.yml"
+	role_paths = ["../ansible/fail2ban","../ansible/unattended-upgrades"]
 	extra_arguments= [ 
 	  "-vvv",
 	  "--extra-vars",

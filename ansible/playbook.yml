@@ -1,15 +1,12 @@
 ---
 - hosts: all
   become: true
-
   tasks:
     - name: Install Prerequisites
       apt: name=aptitude update_cache=yes state=latest force_apt_get=yes
 
 # set timezone
     - name: Set timezone to Europe/Paris
-      become: yes
-      become_method: sudo
       timezone:
         name: Europe/Paris
 
@@ -61,10 +58,10 @@
         state: present
         key: "{{ lookup('file', '/tmp/digitalocean.pub') }}"
 
-# Install Packages
-#    - name: Install zabbix .deb package from the internet
-#      ansible.builtin.apt:
-#        deb: https://repo.zabbix.com/zabbix/6.0/debian/pool/main/z/zabbix-release/zabbix-release_6.0-1+debian11_all.deb
+ #Install Packages
+    - name: Install zabbix .deb package from the internet
+      ansible.builtin.apt:
+        deb: https://repo.zabbix.com/zabbix/6.0/debian/pool/main/z/zabbix-release/zabbix-release_6.0-1+debian11_all.deb
 
     - name: Add trivy signing key, will not download if present
       ansible.builtin.apt_key:
@@ -91,6 +88,11 @@
 
 #    - name: Install required system packages
 #      apt: name={{ sys_packages }} state=latest
+    - name: Remove vim
+      apt:
+        pkg: vim
+        state: absent
+
     - name: Install a list of packages
       ansible.builtin.apt:
         pkg:
@@ -112,16 +114,21 @@
           - virtualenv
           - python3-setuptools
           - trivy
-          #- zabbix-agent2
+          - mailutils
+          - zabbix-agent2
 
-#    - name: Update all packages to their latest version
-#      ansible.builtin.apt:
-#        name: "*"
-#        state: latest
+    - name: Update all packages to their latest version
+      ansible.builtin.apt:
+        name: "*"
+        state: latest
 
     - name: Upgrade the OS (apt-get dist-upgrade)
       ansible.builtin.apt:
         upgrade: dist
+
+    - name: Remove dependencies that are no longer required
+      ansible.builtin.apt:
+        autoremove: yes
 
     - name: Install pytest-testinfra python package
       ansible.builtin.pip:
@@ -173,7 +180,7 @@
 
     - name: create swap file
       become: yes
-      command: fallocate -l 2G /swapfile
+      command: fallocate -l 10G /swapfile
       when: not swap_file_check.stat.exists
 
     - name: Create swap space
@@ -212,7 +219,20 @@
       sysctl:
         name: vm.vfs_cache_pressure
         value: "50"
-
+    - name: Include the fail2ban role
+      include_role:
+        name: fail2ban
+      vars:
+        fail2ban_services:
+          - name: sshd
+            port: 4444
+            maxretry: 3
+            bantime: -1
+    - name: Include the unattended-upgrade role
+      include_role:
+        name: unattended-upgrades
+      vars:
+        unattended_mail: 'aurel.pere@gmail.com'
 #SSH Setup
     - name: Replacing sshd_config
       copy:
@@ -239,7 +259,8 @@
           HostbasedAuthentication no
           PermitEmptyPasswords no
           ChallengeResponseAuthentication no
-          X11Forwarding yes
+          GSSAPIAuthentication no
+          X11Forwarding no
           X11DisplayOffset 10
           PrintMotd no
           PrintLastLog yes
@@ -247,39 +268,46 @@
           AcceptEnv LANG LC_*
           Subsystem sftp /usr/lib/openssh/sftp-server
           UsePAM yes
+          UseDNS no
           AllowUsers kr1p
+          AllowGroups kr1p
           PasswordAuthentication no
+
+    - name: Start service ssh, if not started
+      ansible.builtin.service:
+        name: ssh
+        state: started
 
     - name: Restart ssh
       service:
         name: ssh
         state: restarted
 #Zabbix Setup
-#    - name: Replace serveractive in zabbix_agent2.conf
-#      ansible.builtin.replace:
-#        path: /etc/zabbix/zabbix_agent2.conf
-#        regexp: 'ServerActive=127.0.0.1'
-#        replace: 'ServerActive=127.0.0.1' #unchanged for same server in tutorial
-#    - name: Replace server in zabbix_agent2.conf
-#      ansible.builtin.replace:
-#        path: /etc/zabbix/zabbix_agent2.conf
-#        regexp: 'Server=127.0.0.1'
-#        replace: 'Server=127.0.0.1' #unchanged for same server in tutorial
-#
-#    - name: Replace server in zabbix_agent2.conf
-#      ansible.builtin.replace:
-#        path: /etc/zabbix/zabbix_agent2.conf
-#        regexp: 'Hostname=Zabbix server'
-#        replace: 'Hostname=Zabbix server' #unchanged for same server in tutorial
-#    - name: Restart zabbix
-#      service:
-#        name: zabbix-agent2
-#        state: restarted
-#
-#    - name: Enable service zabbix-agent2, and not touch the state
-#      ansible.builtin.service:
-#        name: zabbix-agent2
-#        enabled: yes
+    - name: Replace serveractive in zabbix_agent2.conf
+      ansible.builtin.replace:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: 'ServerActive=127.0.0.1'
+        replace: 'ServerActive=172.16.239.40,172.16.238.40' #unchanged for same server in tutorial
+    - name: Replace server in zabbix_agent2.conf
+      ansible.builtin.replace:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: 'Server=127.0.0.1'
+        replace: 'Server=172.16.239.40,172.16.238.40' #unchanged for same server in tutorial
+
+    - name: Replace server in zabbix_agent2.conf
+      ansible.builtin.replace:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: 'Hostname=Zabbix server'
+        replace: 'Hostname=Zabbix server' #unchanged for same server in tutorial
+    - name: Restart zabbix
+      service:
+        name: zabbix-agent2
+        state: restarted
+
+    - name: Enable service zabbix-agent2, and not touch the state
+      ansible.builtin.service:
+        name: zabbix-agent2
+        enabled: yes
     - name: adding existing user 'zabbix' to group docker
       user:
         name: 'zabbix'
@@ -301,27 +329,31 @@
     - name: Allow port 4444
       ufw:
         rule: allow
-        port: 4444
+        port: "4444"
 
     - name: Allow port 80
       ufw:
         rule: allow
-        port: 80
+        port: "80"
+    - name: Allow port 8080
+      ufw:
+        rule: allow
+        port: "8080"
 
     - name: Allow port 443
       ufw:
         rule: allow
-        port: 443
+        port: "443"
 
     - name: Allow port 10050
       ufw:
         rule: allow
-        port: 10050
+        port: "10050"
 
     - name: Allow port 10051
       ufw:
         rule: allow
-        port: 10051
+        port: "10051"
 
     - name: UFW - Allow all outgoing traffic
       ufw:

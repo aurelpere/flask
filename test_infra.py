@@ -63,8 +63,15 @@ def test_packages_installed(host):
     assert host.package("virtualenv").is_installed
     assert host.package("python3-setuptools").is_installed
     assert host.package("trivy").is_installed
-    assert host.pip_package("pytest-testinfra").is_installed
-    #assert host.package("zabbix-agent2").is_installed
+    assert host.package("mailutils").is_installed
+    assert host.package("zabbix-agent2").is_installed
+    assert host.package("fail2ban").is_installed
+
+def test_pip_packages_installed(host):
+    assert host.pip("pytest-testinfra").is_installed
+    assert host.pip("tzlocal").is_installed
+    assert host.pip("supervisor").is_installed
+
 
 def test_package_last_version(host):
     with host.sudo():
@@ -87,7 +94,7 @@ def test_package_last_version(host):
         assert 'virtualenv' not in outstring
         assert 'python3-setuptools' not in outstring
         assert 'trivy' not in outstring
-        #assert 'zabbix-agent2' not in outstring
+        assert 'zabbix-agent2' not in outstring
 
 
 #def test_check_dist_upgrade():
@@ -105,10 +112,10 @@ def test_dockeractive(host):
     assert docker.is_running
     assert docker.is_enabled
 
-#def test_zabbix(host):
-#    zabbix = host.service("zabbix-agent2")
-#    assert zabbix.is_running
-#    assert zabbix.is_enabled
+def test_zabbix(host):
+    zabbix = host.service("zabbix-agent2")
+    assert zabbix.is_running
+    assert zabbix.is_enabled
 
 def test_containerdenabled(host):
     containerd = host.service("containerd")
@@ -125,7 +132,7 @@ def test_fstab(host):
 def test_swapon(host):
     with host.sudo():
         out=host.check_output("swapon --show")
-        assert "2G" in out
+        assert "10G" in out
 
 def test_sysctl(host):
     sysctlconf = host.file("/etc/sysctl.conf")
@@ -165,7 +172,7 @@ def test_sshdconfig(host):
     assert sshdconfig.contains('HostbasedAuthentication no')
     assert sshdconfig.contains('PermitEmptyPasswords no')
     assert sshdconfig.contains('ChallengeResponseAuthentication no')
-    assert sshdconfig.contains('X11Forwarding yes')
+    assert sshdconfig.contains('X11Forwarding no')
     assert sshdconfig.contains('X11DisplayOffset 10')
     assert sshdconfig.contains('PrintMotd no')
     assert sshdconfig.contains('TCPKeepAlive yes')
@@ -173,9 +180,27 @@ def test_sshdconfig(host):
     assert sshdconfig.contains('AcceptEnv LANG LC_*')
     assert sshdconfig.contains('Subsystem sftp /usr/lib/openssh/sftp-server')
     assert sshdconfig.contains('UsePAM yes')
+    assert sshdconfig.contains('UseDNS no')
     assert sshdconfig.contains('AllowUsers kr1p')
     assert sshdconfig.contains('PasswordAuthentication no')
+    assert sshdconfig.contains('AllowGroups kr1p')
+    assert sshdconfig.contains('GSSAPIAuthentication no')
 
+def test_upgrade_config(host):
+    autoupgrade1 = host.file("/etc/apt/apt.conf.d/20auto-upgrades")
+    unattendedupgrade2=host.file("/etc/apt/apt.conf.d/50unattended-upgrades")
+    assert autoupgrade1.contains('APT::Periodic::Update-Package-Lists "1"')
+    assert autoupgrade1.contains('APT::Periodic::Unattended-Upgrade "1"')
+    assert unattendedupgrade2.contains('Unattended-Upgrade::Mail "aurel.pere@gmail.com"')
+    assert unattendedupgrade2.contains('Unattended-Upgrade::Origins-Pattern {')
+    assert unattendedupgrade2.contains('origin=Debian,codename=${distro_codename},label=Debian-Security')
+def test_fail2ban_config(host):
+    fail2banfile = host.file("/etc/fail2ban/fail2ban.local")
+    assert fail2banfile.contains("loglevel = INFO")
+    assert fail2banfile.contains("logtarget = /var/log/fail2ban.log")
+    fail2banservice = host.service("fail2ban")
+    assert fail2banservice.is_running
+    assert fail2banservice.is_enabled
 def test_ufw(host):
     ufw = host.service("ufw")
     assert ufw.is_running

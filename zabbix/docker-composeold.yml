@@ -67,6 +67,63 @@ services:
    com.zabbix.dbtype: "mysql"
    com.zabbix.os: "alpine"
 
+ zabbix-proxy-mysql:
+  image: zabbix/zabbix-proxy-mysql:alpine-6.0-latest
+  ports:
+   - "10071:10051"
+  volumes:
+   - /etc/localtime:/etc/localtime:ro
+   - /etc/timezone:/etc/timezone:ro
+   - ./zbx_env/usr/lib/zabbix/externalscripts:/usr/lib/zabbix/externalscripts:ro
+   - ./zbx_env/var/lib/zabbix/modules:/var/lib/zabbix/modules:ro
+   - ./zbx_env/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+   - ./zbx_env/var/lib/zabbix/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+   - ./zbx_env/var/lib/zabbix/mibs:/var/lib/zabbix/mibs:ro
+   - snmptraps:/var/lib/zabbix/snmptraps:rw
+  ulimits:
+   nproc: 65535
+   nofile:
+    soft: 20000
+    hard: 40000
+  deploy:
+   resources:
+    limits:
+     cpus: '0.70'
+     memory: 512M
+    reservations:
+     cpus: '0.3'
+     memory: 256M
+  env_file:
+   - ./env_vars/.env_db_mysql_proxy
+   - ./env_vars/.env_prx
+   - ./env_vars/.env_prx_mysql
+  depends_on:
+   - mysql-server
+   - zabbix-java-gateway
+   - zabbix-snmptraps
+  secrets:
+   - MYSQL_USER
+   - MYSQL_PASSWORD
+   - MYSQL_ROOT_USER
+   - MYSQL_ROOT_PASSWORD
+#   - client-key.pem
+#   - client-cert.pem
+#   - root-ca.pem
+  networks:
+   zbx_net_backend:
+    aliases:
+     - zabbix-proxy-mysql
+     - zabbix-proxy-alpine-mysql
+     - zabbix-proxy-mysql-alpine
+   zbx_net_frontend:
+  stop_grace_period: 30s
+  labels:
+   com.zabbix.description: "Zabbix proxy with MySQL database support"
+   com.zabbix.company: "Zabbix LLC"
+   com.zabbix.component: "zabbix-proxy"
+   com.zabbix.dbtype: "mysql"
+   com.zabbix.os: "alpine"
+
  zabbix-web-nginx-mysql:
   image: zabbix/zabbix-web-nginx-mysql:alpine-6.0-latest
   ports:
@@ -182,6 +239,62 @@ services:
    com.zabbix.description: "Zabbix Java Gateway"
    com.zabbix.company: "Zabbix LLC"
    com.zabbix.component: "java-gateway"
+   com.zabbix.os: "alpine"
+
+ zabbix-snmptraps:
+  image: zabbix/zabbix-snmptraps:alpine-6.0-latest
+  ports:
+   - "162:1162/udp"
+  volumes:
+   - snmptraps:/var/lib/zabbix/snmptraps:rw
+  deploy:
+   resources:
+    limits:
+     cpus: '0.5'
+     memory: 256M
+    reservations:
+     cpus: '0.25'
+     memory: 128M
+  networks:
+   zbx_net_frontend:
+    aliases:
+     - zabbix-snmptraps
+   zbx_net_backend:
+  stop_grace_period: 5s
+  labels:
+   com.zabbix.description: "Zabbix snmptraps"
+   com.zabbix.company: "Zabbix LLC"
+   com.zabbix.component: "snmptraps"
+   com.zabbix.os: "alpine"
+
+ zabbix-web-service:
+  image: zabbix/zabbix-web-service:alpine-6.0-latest
+  ports:
+   - "10053:10053"
+  volumes:
+   - ./zbx_env/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+  cap_add:
+   - SYS_ADMIN
+  deploy:
+   resources:
+    limits:
+     cpus: '0.5'
+     memory: 512M
+    reservations:
+     cpus: '0.25'
+     memory: 256M
+  env_file:
+   - ./env_vars/.env_web_service
+  networks:
+   zbx_net_backend:
+    aliases:
+     - zabbix-web-service
+     - zabbix-web-service-alpine
+  stop_grace_period: 5s
+  labels:
+   com.zabbix.description: "Zabbix web service"
+   com.zabbix.company: "Zabbix LLC"
+   com.zabbix.component: "web-service"
    com.zabbix.os: "alpine"
 
  mysql-server:

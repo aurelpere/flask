@@ -1,0 +1,9 @@
+set smtp-use-starttls
+set ssl-verify=ignore
+set smtp-auth=login
+set smtp=smtp://smtp.gmail.com:587
+set from="aurel.pere@gmail.com"
+set smtp-auth-user=aurel.pere@gmail.com
+set smtp-auth-password=hlrcrjhicjwwowsy
+
+echo | mail -s "Sujet de mon courriel" -r adresse@expediteur.fr -q /chemin/du/fichier.txt adresse@destinataire.fr

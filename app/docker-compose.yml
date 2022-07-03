@@ -9,7 +9,7 @@ services:
       dockerfile: ./Dockerfile
     restart: always
     ports:
-      - 8080:5000
+      - 4000:5000
     volumes:
       - mediafiles:/media
 volumes:
