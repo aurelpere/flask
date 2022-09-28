@@ -69,7 +69,7 @@ jobs:
           token: ${{ secrets.DO_PAT }}
 
       - name: check if a packer image exists
-        run: if doctl compute image list-user -t $(echo "$DO_PAT") | grep packer; then echo "IMAGE_EXIST=true" >> $GITHUB_ENV; else echo "IMAGE_EXIST=false" >> $GITHUB_ENV; fi
+        run: if doctl compute image list-user -t $(echo "$DO_PAT") | grep packer_webforce; then echo "IMAGE_EXIST=true" >> $GITHUB_ENV; else echo "IMAGE_EXIST=false" >> $GITHUB_ENV; fi
         env:
           DO_PAT: ${{ secrets.DO_PAT }}
 
