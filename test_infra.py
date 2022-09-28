@@ -63,7 +63,7 @@ def test_packages_installed(host):
     assert host.package("virtualenv").is_installed
     assert host.package("python3-setuptools").is_installed
     assert host.package("trivy").is_installed
-    assert host.package("mailutils").is_installed
+    #assert host.package("mailutils").is_installed
     assert host.package("zabbix-agent2").is_installed
     assert host.package("fail2ban").is_installed
 
