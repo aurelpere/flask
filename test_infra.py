@@ -132,7 +132,7 @@ def test_fstab(host):
 def test_swapon(host):
     with host.sudo():
         out=host.check_output("swapon --show")
-        assert "10G" in out
+        assert "6G" in out
 
 def test_sysctl(host):
     sysctlconf = host.file("/etc/sysctl.conf")
