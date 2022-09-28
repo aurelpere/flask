@@ -180,7 +180,7 @@
 
     - name: create swap file
       become: yes
-      command: fallocate -l 10G /swapfile
+      command: fallocate -l 6G /swapfile
       when: not swap_file_check.stat.exists
 
     - name: Create swap space
