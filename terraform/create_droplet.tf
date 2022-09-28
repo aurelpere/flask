@@ -1,5 +1,5 @@
 data "digitalocean_droplet_snapshot" "packer-snapshot" {
-  name_regex  = "^packer"
+  name_regex  = "packer_webforce"
   most_recent = true
 }
 

@@ -18,7 +18,7 @@ source "digitalocean" "flask-tutorial" {
   size         = "s-1vcpu-1gb"
   ssh_username = "root"
   monitoring = true
-  snapshot_name = "packer-{{timestamp}}"
+  snapshot_name = "packer_webforce"
   droplet_name = "Debian-11-docker-zabbix"
   ssh_key_id = 34648169
   ssh_private_key_file = "digitalocean" 
