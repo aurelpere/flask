@@ -90,3 +90,4 @@ destroy:
 build: test-vulnerability test-misconfiguration install format yamllint lint testapp packerbuild terraformbuild
 buildlight: test-vulnerability test-misconfiguration install format lint testapp terraformbuild
 all: build testmachine deploy
+
